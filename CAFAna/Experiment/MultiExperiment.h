@@ -1,22 +1,37 @@
 #pragma once
 
-#include "CAFAna/Experiment/IChiSqExperiment.h"
+#include "CAFAna/Experiment/IExperiment.h"
 #include "TMatrixD.h"
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
 namespace ana
 {
+  namespace
+  {
+    std::vector<IExperiment> _ChiSqExpPtrsToExps(std::vector<const IChiSqExperiment*> expts)
+    {
+      std::vector<IExperiment> ret;
+      std::transform(expts.begin(), expts.end(), std::back_inserter(ret), [](const IChiSqExperiment* e) {return IExperiment(e);});
+      return ret;
+    }
+  }
+
   /// Combine multiple component experiments
-  class MultiExperiment: public IChiSqExperiment
+  class MultiExperiment: public IChiSqExperiment, public ILkhdExperiment
   {
   public:
-    MultiExperiment(std::vector<const IChiSqExperiment*> expts = {}) : fExpts(expts)
+    MultiExperiment(std::vector<IExperiment> expts) : fExpts(expts)
     {
       fSystCorrelations.resize(expts.size());
       fUseCovMx.resize(expts.size(), false);
     }
+
+    MultiExperiment(std::vector<const IChiSqExperiment*> expts = {})
+      : MultiExperiment(_ChiSqExpPtrsToExps(expts))
+    {}
 
     void Add(const IChiSqExperiment* expt){
       fExpts.push_back(expt);
@@ -39,7 +54,10 @@ namespace ana
                             const SystShifts& shift,
                             std::unordered_map<const ISyst*, double>& dchi) const override;
 
-    /// For the subexperiment \a idx, set up a mapping between systematics
+    stan::math::var LogLikelihood(osc::_IOscCalculatorAdjustable<stan::math::var> *osc,
+                                  const SystShifts &syst = SystShifts::Nominal()) const override;
+
+      /// For the subexperiment \a idx, set up a mapping between systematics
     ///
     /// Each element in the vector is a pair from a "primary" systematic to a
     /// "secondary". When this MultiExperiment is called with a primary
@@ -57,7 +75,10 @@ namespace ana
     static std::unique_ptr<MultiExperiment> LoadFrom(TDirectory* dir);
 
   protected:
-    std::vector<const IChiSqExperiment*> fExpts;
+    template <typename T>
+    T _SumSimpleStatistic(osc::_IOscCalculatorAdjustable<T>* osc, const SystShifts& syst) const;
+
+    std::vector<IExperiment> fExpts;
     std::vector<bool> fUseCovMx; // is there a covariance matrix for this Experiment?
 
     std::vector<std::vector<std::pair<const ISyst*, const ISyst*>>> fSystCorrelations;
