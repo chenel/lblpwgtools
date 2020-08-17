@@ -66,6 +66,23 @@ namespace mcmc_ana
       STASH_DIR + "/mcc11v4_ND_RHC.root",
   };
 
+  // for whatever reason these don't seem to be loaded automatically
+  const auto FLUX_SYSTS = GetDUNEFluxSysts(30, true, false);
+  const auto FLUX_SYSTS_CDR = GetDUNEFluxSysts(30, true, true);  // load them so that we don't get warnings from our state file
+
+  // Callum says don't use these
+  const std::list<std::string> VETO_SYST_STUBS
+  {
+      "BeRPA_E",
+      "FSILikeEAvailSmearing",
+      "MissingProtonFakeData",
+      "MKSPP_ReWeight",
+      "Mnv2p2hGaussEnhancement",
+      "NuWroReweightFakeData",
+      "SPPLowQ2Suppression",
+      "flux_CDR",  // superseded by newer "Nov17" ones
+  };
+
   // ---------------------------------------------
 
   // ---------------------------------------------
@@ -92,6 +109,7 @@ namespace mcmc_ana
     return colmin;
   }
 
+  // ---------------------------------------------
   std::string FullFilename(const std::string & dir, std::string file)
   {
     if (!dir.empty())
@@ -133,29 +151,6 @@ namespace mcmc_ana
         stan::math::recover_memory();
     }
 
-    //for (int dm32Step = -100; dm32Step <= 100; dm32Step++)
-    //{
-    //  double dm32 = dm32Step * 0.001;
-    //   const double stepSize = 2*TMath::Pi()/100.;
-    //  double ll = -std::numeric_limits<double>::infinity();
-    //  for (double th23 = 0; th23 < 100*stepSize; th23 += stepSize)
-    //  {
-    //    osc::OscCalcPMNSOptStan stanCalc;
-    //    osc::CopyParams(calcTruth, &stanCalc);
-    //    stanCalc.SetDmsq32(dm32);
-    //    stanCalc.SetTh23(th23);
-    //    SystShifts shifts_;
-    //    for (const auto & s : systTruePulls->ActiveSysts())
-    //      shifts_.SetShift(s, util::GetValAs<stan::math::var>(systTruePulls->GetShift(s)));
-    //    for (double delta = 0; delta < 100*stepSize; delta += stepSize)
-    //    {
-    //      stanCalc.SetdCP(delta);
-    //      ll = std::max(ll, util::GetValAs<double>(expt->LogLikelihood(&stanCalc, shifts_)));
-    //    }
-    //    stan::math::recover_memory();
-    //  }
-    //  g.SetPoint(g.GetN(), dm32*1000, ll);
-    //}
     TCanvas c;
     g.Draw("apl");
     g.SetTitle(Form(";%s;LL", varOrSyst->LatexName().c_str()));
@@ -261,7 +256,21 @@ void fit_3flavor_MCMC(bool loadSamplesFromFile=true,
     if (auto predInterp = dynamic_cast<const PredictionInterp*>(predPair.second.get()))
     {
       for (const auto & syst : predInterp->GetAllSysts())
-        allSysts.insert(syst);
+      {
+        bool ok = true;
+        for (const auto & sName : mcmc_ana::VETO_SYST_STUBS)
+        {
+          if (syst->ShortName().size() < sName.size() )
+            continue;
+          if (syst->ShortName().substr(0, sName.size()) == sName)
+          {
+            ok = false;
+            break;
+          }
+        }
+        if (ok)
+          allSysts.insert(syst);
+      }
     }
   }
 
@@ -286,6 +295,12 @@ void fit_3flavor_MCMC(bool loadSamplesFromFile=true,
   for (const auto & predPair : preds)
     std::cout << " " << predPair.first  << " (" << DemangledTypeName(predPair.second.get()) << ")" << std::endl;
   assert(preds.size() == (fitND ? 6 : 4));
+
+  //std::cout << "Fitting using the following systs:" << std::endl;
+  //for (const auto & syst : allSystsSorted)
+  //  std::cout << "  " << syst->ShortName() << std::endl;
+  //
+  //abort();
 
 //    calc = new osc::OscCalcPMNSOpt;
 //    calc = new osc::OscCalcPMNS;
@@ -338,12 +353,10 @@ void fit_3flavor_MCMC(bool loadSamplesFromFile=true,
         corrs.push_back(std::make_pair(syst, static_cast<const ISyst *>(nullptr)));
       }
 
-      double scale = predPair.first.substr(0, 2) == "nd" ? nd_scale : 1.0;
       fakeData.emplace(predPair.first,
                        std::make_unique<Spectrum>(predPair.second->PredictSyst(calcTruth, thisPredShifts).FakeData(mcmc_ana::POT)));
-      fakeData[predPair.first]->Scale(scale);
       expts.emplace(std::make_pair(predPair.first,
-                                   std::make_unique<SingleSampleExperiment>(predPair.second.get(), *fakeData.at(predPair.first), scale)));
+                                   std::make_unique<SingleSampleExperiment>(predPair.second.get(), *fakeData.at(predPair.first))));
       expt.Add(expts.at(predPair.first).get());
       expt.SetSystCorrelations(std::distance(exptNames.begin(),
                                              std::find(exptNames.begin(), exptNames.end(), predPair.first)),
@@ -371,12 +384,6 @@ void fit_3flavor_MCMC(bool loadSamplesFromFile=true,
     cfg.num_warmup = 1000;
     cfg.num_samples = 1000;
     cfg.max_depth = 15;
-    //cfg.stepsize = 0.001;
-    //cfg.denseMassMx = true;
-    if (adaptDelta > 0 && adaptDelta <= 1)
-      cfg.delta = adaptDelta;
-    if (fastAdaptSamples > 0)
-      cfg.init_buffer = fastAdaptSamples;
     cfg.verbosity = StanConfig::Verbosity::kQuiet;
 //    cfg.verbosity = StanConfig::Verbosity::kEverything;
     StanFitter fitter(&expt, fitVars, allSystsSorted);
