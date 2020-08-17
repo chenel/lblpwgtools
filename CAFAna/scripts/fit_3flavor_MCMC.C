@@ -34,6 +34,7 @@
 #include "CAFAna/Fit/StanFitter.h"
 #include "CAFAna/Fit/MCMCSamples.h"
 #include "CAFAna/Prediction/PredictionNoExtrap.h"
+#include "CAFAna/Systs/DUNEFluxSysts.h"
 
 #include "OscLib/OscCalcPMNS.h"
 #include "OscLib/OscCalcPMNSOpt.h"
@@ -84,6 +85,32 @@ namespace mcmc_ana
   };
 
   // ---------------------------------------------
+
+  ULong_t GetSeed(double input)
+  {
+    static_assert(sizeof(double) == sizeof(ULong_t),
+                  "double and ULong_t are different sizes on this architecture");
+
+    if (input == 0)
+      return 0;
+
+    // use a seed built from today's date
+    if (input < 0)
+    {
+      std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+      auto localtime = std::localtime(&now);
+      // YYYYMMDD
+      input = localtime->tm_year * 1000 + localtime->tm_mon * 100 + localtime->tm_mday;
+    }
+
+    ULong_t seedUsed;
+    if (input - static_cast<ULong_t>(input) == 0)
+      seedUsed = static_cast<ULong_t>(input);
+    else
+      seedUsed = *reinterpret_cast<ULong_t *>(&input);
+
+    return seedUsed;
+  }
 
   // ---------------------------------------------
   int GetRedHeatPalette()
@@ -170,9 +197,7 @@ void fit_3flavor_MCMC(bool loadSamplesFromFile=true,
                       std::string dirPrefix=".",
                       std::string samplesFilename=mcmc_ana::SAVED_SAMPLES_FILE,
                       bool fitND=false,
-                      int fastAdaptSamples=-1,
-                      double adaptDelta=-1,
-                      double nd_scale=1.0)
+                      double systFakeDataSeed=-1)
 {
   assert (loadSamplesFromFile != saveSamplesToFile);
 
@@ -323,12 +348,21 @@ void fit_3flavor_MCMC(bool loadSamplesFromFile=true,
     calcTruth = new osc::OscCalcPMNS;  // type of this one doesn't matter; just for storage
     *calcTruth = *calc;
 
-    // choose syst pulls at random
+    // choose syst pulls at random.
+    // (unless seed is 0)
     TRandom3 rnd;
-    rnd.SetSeed(20200806);
+    auto seedUsed = mcmc_ana::GetSeed(systFakeDataSeed);
+    if (seedUsed > 0)
+    {
+      std::cout << "Seed used for throwing syst pulls for fake data: " << seedUsed << std::endl;
+      rnd.SetSeed(seedUsed);
+    }
+    else
+      std::cout << "Syst pulls for fake data will be set to nominal (pull = 0)." << std::endl;
+
     shifts = std::make_unique<GaussianPriorSystShifts>();
     for (const auto &syst : allSystsSorted)
-      shifts->SetShift(syst, rnd.Gaus());
+      shifts->SetShift(syst, seedUsed > 0 ? rnd.Gaus() : 0);
     systTruePulls = shifts->Copy();
 
     // make sure we fit all the systs, but those that aren't shared by every expt
