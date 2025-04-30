@@ -411,7 +411,7 @@ namespace ana
       /// Helper function that actually does the unconstraining Stan needs
       template <typename T>
       void transform_helper(const stan::io::var_context& context,
-                            stan::io::writer<double>& writer,
+                            stan::io::serializer<double>& writer,
                             const T& var) const;
 
       /// Req'd by IFitter interface, but we don't need it here

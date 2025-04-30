@@ -11,8 +11,8 @@
 #pragma GCC diagnostic ignored "-Wignored-qualifiers"
 #include "stan/callbacks/stream_logger.hpp"
 #include "stan/callbacks/stream_writer.hpp"
-#include "stan/io/reader.hpp"
-#include "stan/io/writer.hpp"
+#include "stan/io/deserializer.hpp"
+#include "stan/io/serializer.hpp"
 #include "stan/services/sample/hmc_nuts_dense_e_adapt.hpp"
 #include "stan/services/sample/hmc_nuts_diag_e_adapt.hpp"
 #include "stan/services/util/create_unit_e_diag_inv_metric.hpp"
@@ -317,7 +317,7 @@ namespace ana
       // as in the loops below, so hopefully no wires
       // get crossed anywhere...
       // (boy do I wish there were another way to do this...)
-      stan::io::reader<T> reader(params_real, params_int);
+      stan::io::deserializer<T> reader(params_real, params_int);
 
       if (fStanConfig.verbosity == StanConfig::Verbosity::kEverything)
         std::cout << "-----------" << std::endl;
@@ -334,11 +334,11 @@ namespace ana
         {
           if (jacobian__)
             // GetValAs() because the version of this function where T is double gets instantiated and is req'd by Stan
-            val = reader.scalar_lub_constrain(util::GetValAs<T>(constrVar->LowLimit()),
-                                              util::GetValAs<T>(constrVar->HighLimit()), logprob);
+            val = reader.read_constrain_lub(util::GetValAs<T>(constrVar->LowLimit()),
+                                            util::GetValAs<T>(constrVar->HighLimit()), logprob);
           else
-            val = reader.scalar_lub_constrain(util::GetValAs<T>(constrVar->LowLimit()),
-                                              util::GetValAs<T>(constrVar->HighLimit()));
+            val = reader.read_constrain_lub(util::GetValAs<T>(constrVar->LowLimit()),
+                                            util::GetValAs<T>(constrVar->HighLimit()));
         }
         else
         {
@@ -766,7 +766,7 @@ namespace ana
   //----------------------------------------------------------------------
   template <typename T>
   void StanFitter::transform_helper(const stan::io::var_context& context,
-                                    stan::io::writer<double>& writer,
+                                    stan::io::serializer<double>& writer,
                                     const T& var) const
   {
     static_assert(std::is_same<T, const IFitVar *>::value || std::is_same<T, const ISyst *>::value,
@@ -789,11 +789,12 @@ namespace ana
                     << " from constrained between " <<  constrFitVar->LowLimit() << " and " << constrFitVar->HighLimit()
                     << " to unbounded space" << std::endl;
         }
-        writer.scalar_lub_unconstrain(util::GetValAs<double>(constrFitVar->LowLimit()),
-                                      util::GetValAs<double>(constrFitVar->HighLimit()), val);
+        writer.write_free_lub(util::GetValAs<double>(constrFitVar->LowLimit()),
+                              util::GetValAs<double>(constrFitVar->HighLimit()),
+                              val);
       }
       else
-        writer.scalar_unconstrain(val);
+        writer.write(val);
 
     }
     catch (const std::exception& e)
@@ -805,10 +806,10 @@ namespace ana
 
   // explicitly instantiate for the two relevant cases
   template void StanFitter::transform_helper(const stan::io::var_context&,
-                                             stan::io::writer<double>&,
+                                             stan::io::serializer<double>&,
                                              const IFitVar * const &) const;
   template void StanFitter::transform_helper(const stan::io::var_context&,
-                                             stan::io::writer<double>&,
+                                             stan::io::serializer<double>&,
                                              const ISyst * const &) const;
 
   //----------------------------------------------------------------------
@@ -818,7 +819,7 @@ namespace ana
                                    std::ostream*) const
   {
 
-    stan::io::writer<double> stanWriter(params_real, params_int);
+    stan::io::serializer<double> stanWriter(params_real);
 
     for (const auto & var : fVars)
       transform_helper(context, stanWriter, var);
@@ -841,7 +842,6 @@ namespace ana
                                std::ostream*) const
   {
     vars.resize(0);
-    stan::io::reader<double> paramReader(params_real, params_int);
     for (std::size_t i = 0; i < params_real.size(); i++)
     {
       const IConstrainedFitVar * constrFitVar = nullptr;
@@ -857,13 +857,14 @@ namespace ana
                     << " to constrained between " <<  constrFitVar->LowLimit() << " and " << constrFitVar->HighLimit()
                     << std::endl;
         }
-        parVal = paramReader.scalar_lub_constrain(util::GetValAs<double>(constrFitVar->LowLimit()),
-                                                  util::GetValAs<double>(constrFitVar->HighLimit()));
+        parVal = stan::math::lub_constrain(params_real[i],
+                                           util::GetValAs<double>(constrFitVar->LowLimit()),
+                                           util::GetValAs<double>(constrFitVar->HighLimit()));
         if (fStanConfig.verbosity == StanConfig::Verbosity::kEverything)
           std::cout << "   got value = " << parVal << std::endl;
       }
       else
-        parVal = paramReader.scalar_constrain();
+        parVal = params_real[i];
       vars.push_back(parVal);
     }
   }
